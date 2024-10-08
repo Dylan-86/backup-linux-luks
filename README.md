@@ -1,80 +1,164 @@
 
-### Gist: Cloning and Restoring Ubuntu System with LUKS Encryption
+### **Cloning and Restoring Ubuntu System with LUKS Encryption**
 
-#### Boot your computer with a Live Ubuntu USB - All the following steps will not work if you are within your running installation. The "source", which is typically your internal drive, should be mounted from an outside installation, therefore a Live Ubuntu USB is definitely the easiest way.
+#### **Prerequisite:**
 
-#### Creating the Backup
+-   Boot your computer with a Live Ubuntu USB.
+-   Ensure you're not inside the running installation. Use the Live USB environment to access your internal drive, referred to as the "source."
+
+----------
+
+### **Creating the Backup**
+
+#### 1. **Open Source LUKS Container**
+
+Use the following steps to open your LUKS-encrypted container:
+
+List all devices to identify your source disk.
+
+ 1. `df`  take note of the right /dev/sdX of the hard disk to clone
+ 3. `sudo cryptsetup open /dev/sdX source_crypt` 
+
+Replace `/dev/sdX` with your source disk's identifier.
+
+#### 2. **Mount Source Filesystem**
+
+Mount the source disk's filesystem to `/mnt/source`:
+
+`sudo mkdir -p /mnt/source`
+`sudo mount /dev/mapper/source_crypt /mnt/source` 
+
+#### 3. **Prepare Destination Drive**
+- use `lsblk` to see all the connected devices and take note of the identifier of your external drive/destination disk
+-   If your external (backup) drive is **new**, go to step 4.
+-   If you're updating an existing **backup**, go to step 5.
+
+#### 4. **NEW EXTERNAL DRIVE: Initialize Destination LUKS Container**
+
+Format the new drive with LUKS encryption and open it:
+
+`sudo cryptsetup luksFormat /dev/sdY`  # Replace `/dev/sdY` with your destination disk's identifier.
+`sudo cryptsetup open /dev/sdY destination_crypt`
+
+After this, skip to step 6.
+
+#### 5. **EXISTING EXTERNAL DRIVE: Open Existing LUKS Container**
+
+If your external drive is already formatted with LUKS, follow these commands to mount it:
+
+`sudo vgchange -ay`  # Activate LVM - needed to make the system recognize the LUKS filesystem.
+`sudo cryptsetup open /dev/sdc1 external_crypt`  # Replace `/dev/sdc1` with the correct partition.
+`sudo lvscan`  # Find the LVM partitions (typically `vgubuntu/root`).
+`sudo mount /dev/vgubuntu/root /mnt/source`
+
+#### 6. **Mount Destination Filesystem**
 
 
-1. **Open Source LUKS Container**
-   - `sudo cryptsetup open /dev/sdX source_crypt`
-   - Replace `/dev/sdX` with your source disk's device identifier.
+`sudo mkdir -p /mnt/destination` 
+`sudo mount /dev/mapper/destination_crypt /mnt/destination`
 
-2. **Mount Source Filesystem**
-   - `sudo mkdir -p /mnt/source`
-   - `sudo mount /dev/mapper/source_crypt /mnt/source`
+#### 7. **Rsync Data**
 
-3. **Initialize Destination LUKS Container**
-   - `sudo cryptsetup luksFormat /dev/sdY`
-   - `sudo cryptsetup open /dev/sdY destination_crypt`
-   - Replace `/dev/sdY` with your destination disk's device identifier.
+Use `rsync` to clone your source system to the destination. 
+You may remove the `--delete` option if you do not want to delete files on the destination that no longer exist on the source.
+Note that this step may take several hours.
 
-4. **Mount Destination Filesystem**
-   - `sudo mkdir -p /mnt/destination`
-   - `sudo mount /dev/mapper/destination_crypt /mnt/destination`
+`sudo rsync -aHAXxv --numeric-ids --delete --info=progress2 /mnt/source/ /mnt/destination/` 
 
-5. **Rsync Data**
-   - `sudo rsync -aHAXxv --numeric-ids --info=progress2 /mnt/source/ /mnt/destination/`
+#### 8. **Unmount and Close Containers**
 
-6. **Unmount and Close Containers**
-   - `sudo umount /mnt/source /mnt/destination`
-   - `sudo cryptsetup close source_crypt destination_crypt`
+When the `rsync` process is complete, unmount and close both containers:
 
-#### Restoring the Backup to a New Drive
+`sudo umount /mnt/source /mnt/destination`
+`sudo cryptsetup close source_crypt destination_crypt` 
 
-1. **Prepare New Disk with LUKS**
-   - `sudo cryptsetup luksFormat /dev/sdZ`
-   - `sudo cryptsetup open /dev/sdZ newdisk_crypt`
-   - Replace `/dev/sdZ` with your new disk's device identifier.
+----------
 
-2. **Mount New Disk Filesystem**
-   - `sudo mkdir -p /mnt/newdisk`
-   - `sudo mount /dev/mapper/newdisk_crypt /mnt/newdisk`
+### **Restoring the Backup to a New Drive**
+These steps will let you restore the backup from the external drive to an internal hard disk / SSD.
 
-3. **Restore Data with Rsync**
-   - Repeat the rsync command as before to clone data from the backup to the new disk.
+#### 1. **Prepare New Disk with LUKS**
 
-4. **Chroot into New System**
-   - Bind necessary directories:
-     ```bash
-     for dir in /dev /dev/pts /proc /sys /run; do sudo mount --bind $dir /mnt/newdisk$dir; done
-     ```
-   - `sudo chroot /mnt/newdisk`
+Format the new drive (internal hard drive for example) with LUKS encryption and open it:
+`df` # List all the internal drives, take note of the ID of the one you need to use. The backup will be restored there.
+This step formats the disk.
 
-5. **Install and Update GRUB**
-   - `grub-install /dev/sdZ`
-   - `update-grub`
-   - Replace `/dev/sdZ` with your new disk's device identifier.
+`sudo cryptsetup luksFormat /dev/sdZ`  # Replace `/dev/sdZ` with your new disk's identifier.
+`sudo cryptsetup open /dev/sdZ newdisk_crypt`
 
-6. **Update `/etc/fstab`**
-   - Inside chroot, use `blkid` to find the UUIDs of the new disk's partitions.
-   - Open `/etc/fstab` with a text editor like `nano` or `vi`.
-   - Replace the old UUIDs with the new ones for each partition (root, home, swap, etc.).
-   - Ensure that the file paths and mount options are correct.
-   - Save and exit the editor.
+#### 2. **Mount New Disk Filesystem**
 
-7. **Exit Chroot and Unmount**
-   - `exit`
-   - `for dir in /dev/pts /dev /proc /sys /run; do sudo umount /mnt/newdisk$dir; done`
-   - `sudo umount /mnt/newdisk`
+`sudo mkdir -p /mnt/newdisk`
+`sudo mount /dev/mapper/newdisk_crypt /mnt/newdisk` 
 
-8. **Close New Disk's LUKS Container**
-   - `sudo cryptsetup close newdisk_crypt`
+#### 3. **Restore Data with Rsync**
 
-### Additional Notes:
+Use the same `rsync` command as in the backup process to restore data to the new disk:
 
-- **Testing**: Boot from the new disk to ensure the system runs correctly.
-- **Regular Backups**: Keep your backup updated regularly.
-- **Secure Storage**: Store the backup disk in a secure location.
+`sudo rsync -aHAXxv --numeric-ids --info=progress2 /mnt/destination/ /mnt/newdisk/` 
 
-This gist provides a detailed guide on cloning an Ubuntu system with LUKS encryption to a backup drive and restoring it to a new drive, including making the new drive bootable. Each step is crucial, so proceed with caution and ensure you understand each command before executing it.
+There is no need to use --delete since the drive will be empty.
+
+#### 4. **Chroot into New System**
+
+To make the new system bootable, you'll need to `chroot` into it and reinstall GRUB:
+
+
+`for dir in /dev /dev/pts /proc /sys /run; do sudo mount --bind $dir /mnt/newdisk$dir; done`
+
+`sudo chroot /mnt/newdisk` 
+
+#### 5. **Install and Update GRUB**
+
+
+
+`grub-install /dev/sdZ`  # Replace `/dev/sdZ` with your new disk's identifier.
+`update-grub`
+
+#### 6. **Update `/etc/fstab`**
+
+Within the `chroot` environment, update `/etc/fstab`:
+
+1.  Use `blkid` to list the UUID and find the UUIDs of the new disk's partitions.
+This command will output something like:
+
+`/dev/sda1: UUID="d1f2fcd6-02ef-4ad6-9f08-bf282f2547f2" TYPE="ext4" PARTUUID="3b1f6f3e-01"`
+`/dev/sda2: UUID="7156-9B0D" TYPE="vfat" PARTUUID="3b1f6f3e-02"`
+`/dev/sda3: UUID="68bc7263-b28c-4735-b62e-295c3dd9eb9e" TYPE="swap" PARTUUID="3b1f6f3e-03"`
+
+
+-   **`/dev/sda1`**: This could be your root (`/`) partition, with the `UUID="d1f2fcd6-02ef-4ad6-9f08-bf282f2547f2"`.
+-   **`/dev/sda2`**: This might be your EFI partition (if using UEFI boot), with `UUID="7156-9B0D"`.
+-   **`/dev/sda3`**: This could be your swap partition with its unique UUID.
+
+Take note of these UUIDs for the partitions on your new disk.
+
+2.  Open `/etc/fstab` with an editor (e.g., `nano` or `vi`):
+
+
+`nano /etc/fstab` 
+It will look more or less like this
+
+    # <file system> <mount point> <type> <options> <dump> <pass>
+    UUID=old-root-uuid  /      ext4  errors=remount-ro  0       1
+    UUID=old-efi-uuid   /boot/efi  vfat  defaults         0       1
+    UUID=old-swap-uuid  none   swap  sw                 0       0
+
+3.  Replace the old UUIDs with the new ones for each partition (root, home, swap, etc.).
+4.  Save and exit the editor. (ctrl + o to save, crtl +x to exit).
+
+#### 7. **Exit Chroot and Unmount**
+
+`exit`  # Exit the chroot environment.
+
+`for dir in /dev/pts /dev /proc /sys /run; do sudo umount /mnt/newdisk$dir; done`
+
+`sudo umount /mnt/newdisk` 
+
+#### 8. **Close New Disk's LUKS Container**
+
+`sudo cryptsetup close newdisk_crypt`
+
+
+
+**Now you should be able to reboot normally into the new disk.**
